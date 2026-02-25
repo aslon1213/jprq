@@ -35,6 +35,7 @@ func printHelp() {
 	fmt.Println("  http  <port> -s <subdomain> Start an HTTP tunnel with a custom subdomain")
 	fmt.Println("  http  <port> --debug        Debug an HTTP tunnel with Jprq Debugger")
 	fmt.Println("  serve <dir>                 Serve files with built-in Http Server")
+	fmt.Println("  file <file>                 Serve a file with built-in Http Server")
 	fmt.Println("  --help                      Show this help message")
 	fmt.Println("  --version                   Show the version number")
 	fmt.Println("  --qr                        Generate QR code for public URL")
@@ -67,8 +68,8 @@ func main() {
 	switch command {
 	case "auth":
 		handleAuth(arg)
-	case "serve":
-		protocol, port = handleServe(arg)
+	case "serve", "file":
+		protocol, port = handleServe(command, arg)
 	case "tcp", "http":
 		protocol = command
 		port, _ = strconv.Atoi(arg)
@@ -132,27 +133,60 @@ func handleAuth(token string) {
 	os.Exit(0)
 }
 
-func handleServe(dir string) (string, int) {
-	dir, err := filepath.Abs(dir)
-	if err != nil {
-		log.Fatalf("no such dir %s", dir)
-	}
+func handleServe(command, path string) (string, int) {
 
-	handler := http.FileServer(http.Dir(dir))
-	listener, err := net.Listen("tcp", ":0")
-	if err != nil {
-		log.Fatalf("failed to start server: %s", err)
-	}
 
-	port := listener.Addr().(*net.TCPAddr).Port
-	go func() {
-		if err := http.Serve(listener, handler); err != nil {
-			log.Fatalf("cannot serve files on %s: %s", dir, err)
+
+	if command == "serve" {
+
+
+		dir, err := filepath.Abs(path)
+		if err != nil {
+			log.Fatalf("no such %s %s", command, dir)
 		}
-	}()
 
-	time.AfterFunc(600*time.Millisecond, func() {
-		log.Println("Serving: \t", dir)
-	})
-	return "http", port
+		handler := http.FileServer(http.Dir(dir))
+		listener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			log.Fatalf("failed to start server: %s", err)
+		}
+
+		port := listener.Addr().(*net.TCPAddr).Port
+		go func() {
+			if err := http.Serve(listener, handler); err != nil {
+				log.Fatalf("cannot serve files on %s: %s", dir, err)
+			}
+		}()
+
+		time.AfterFunc(600*time.Millisecond, func() {
+			log.Println("Serving: \t", dir)
+		})
+		return "http", port
+	} else {
+		_, err := os.ReadFile(path)
+		if err != nil {
+			log.Fatalf("no such %s %s", command, path)
+		}
+		
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, path)
+		})
+		
+		listener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			log.Fatalf("failed to start server: %s", err)
+		}
+
+		port := listener.Addr().(*net.TCPAddr).Port
+		go func() {
+			if err := http.Serve(listener, handler); err != nil {
+				log.Fatalf("cannot serve file %s: %s", path, err)
+			}
+		}()
+
+		time.AfterFunc(600*time.Millisecond, func() {
+			log.Println("Serving: \t", path)
+		})
+		return "http", port
+	}
 }
